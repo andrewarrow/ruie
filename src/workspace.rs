@@ -4,6 +4,7 @@ use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Sizable, StyledExt, ThemeMode, TitleBar, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    menu::{ContextMenuExt, PopupMenuItem},
     text::TextView,
     h_flex, v_flex,
 };
@@ -13,6 +14,10 @@ use crate::{hn::{self, Item}, model::{self, Decision, Filter, Store}, *};
 #[cfg(feature = "visual-check")]
 #[path = "visual_check.rs"]
 pub(crate) mod visual_check;
+
+#[cfg(test)]
+#[path = "workspace_tests.rs"]
+mod tests;
 
 pub fn open(cx: &mut App) {
     gpui_kit::open_window(WindowOptions {
@@ -150,6 +155,11 @@ impl Workspace {
 
     fn decide(&mut self, decision: Option<Decision>, window: &mut Window, cx: &mut Context<Self>) {
         let Some(id) = self.selected else { return; };
+        self.decide_post(id, decision, window, cx);
+    }
+
+    fn decide_post(&mut self, id: u64, decision: Option<Decision>, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.store.posts.contains_key(&id) { return; }
         let old = self.store.decisions.get(&id).copied();
         if old == decision { return; }
         let visible = self.visible(cx);
@@ -159,10 +169,12 @@ impl Workspace {
         else { self.store.decisions.remove(&id); }
         self.notice = Some(format!("{} · {}", decision.map(Decision::label).unwrap_or("Moved to inbox"), self.store.posts[&id].title()));
         self.save();
-        let remaining = self.visible(cx);
-        let next = remaining.get(index).or_else(|| remaining.last()).copied();
-        self.select(next, window, cx);
-        if let Some(index) = next.and_then(|id| remaining.iter().position(|post| *post == id)) { self.list_scroll.scroll_to_item(index); }
+        if self.selected == Some(id) {
+            let remaining = self.visible(cx);
+            let next = remaining.get(index).or_else(|| remaining.last()).copied();
+            self.select(next, window, cx);
+            if let Some(index) = next.and_then(|id| remaining.iter().position(|post| *post == id)) { self.list_scroll.scroll_to_item(index); }
+        }
         window.focus(&self.focus, cx);
         cx.notify();
     }
@@ -328,7 +340,9 @@ impl Workspace {
         let id = post.id;
         let selected = self.selected == Some(id);
         let decision = self.store.decisions.get(&id).copied();
+        let workspace = cx.entity().downgrade();
         v_flex().id(("post", id)).w_full().min_w_0().px_5().py_4().gap_2()
+            .test_support()
             .relative().border_b_1().border_color(cx.theme().border)
             .when(selected, |el| el.child(div().absolute().left_0().top_0().bottom_0().w(px(2.)).bg(cx.theme().primary)))
             .when(selected, |el| el.bg(cx.theme().list_active))
@@ -349,6 +363,27 @@ impl Workspace {
                 this.list_scroll.scroll_to_item(index);
                 window.focus(&this.focus, cx);
             }))
+            .context_menu(move |menu, _, cx| {
+                let Some(view) = workspace.upgrade() else { return menu; };
+                let current = view.read(cx).store.decisions.get(&id).copied();
+                let mut menu = menu.label("Move to");
+                for decision in [Decision::Upvote, Decision::Comment, Decision::Spam] {
+                    let workspace = workspace.clone();
+                    menu = menu.item(PopupMenuItem::new(decision.label())
+                        .checked(current == Some(decision))
+                        .disabled(current == Some(decision))
+                        .on_click(move |_, window, cx| {
+                            let _ = workspace.update(cx, |this, cx| this.decide_post(id, Some(decision), window, cx));
+                        }));
+                }
+                if current.is_some() {
+                    let workspace = workspace.clone();
+                    menu = menu.separator().item(PopupMenuItem::new("Inbox").on_click(move |_, window, cx| {
+                        let _ = workspace.update(cx, |this, cx| this.decide_post(id, None, window, cx));
+                    }));
+                }
+                menu
+            })
             .into_any_element()
     }
 

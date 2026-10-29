@@ -20,6 +20,9 @@ html-escape = "0.2"
 url = "2"
 wry = "0.57.1"
 
+[dev-dependencies]
+gpui-kit = { path = "../gpui-kit/crates/kit", features = ["test-support"] }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 gtk = "0.18"
 
