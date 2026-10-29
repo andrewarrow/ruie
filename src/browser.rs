@@ -27,6 +27,26 @@ pub(crate) fn is_web_url(value: &str) -> bool {
     })
 }
 
+/// Set the process-wide policy before WebKit can request its WebCrypto master key.
+pub(crate) fn disable_keychain_prompts() -> anyhow::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "Security", kind = "framework")]
+        unsafe extern "C" {
+            fn SecKeychainSetUserInteractionAllowed(state: u8) -> i32;
+        }
+
+        // WebKit accesses the legacy keychain from a background thread when a site
+        // serializes CryptoKeys. Deny requests needing approval instead of prompting.
+        // This deprecated API still governs that legacy keychain; it affects only
+        // this process and leaves existing keychain items and web storage intact.
+        // SAFETY: Boolean is UInt8 and OSStatus is Int32 in the macOS Security ABI.
+        let status = unsafe { SecKeychainSetUserInteractionAllowed(0) };
+        anyhow::ensure!(status == 0, "Couldn't disable keychain prompts (OSStatus {status})");
+    }
+    Ok(())
+}
+
 impl Browser {
     pub(crate) fn new(url: &str, label: &str, window: &mut Window, cx: &mut App) -> anyhow::Result<Entity<Self>> {
         anyhow::ensure!(is_web_url(url), "Expected an HTTP or HTTPS URL");

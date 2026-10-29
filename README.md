@@ -29,6 +29,12 @@ Review labels are local queues. Marking a post as Spam does not flag it on HN,
 and selecting Upvote does not cast a vote. Use the upper discussion pane to vote
 or reply on Hacker News. No API key is required.
 
+On macOS, the app disables keychain authorization dialogs so embedded websites
+cannot interrupt reading with a “WebCrypto Master Key” password prompt. Cookies
+and website storage remain persistent. Keychain operations that need approval
+fail instead; if a site's sign-in or encrypted storage requires that access, use
+**Open page in browser**.
+
 ## Build and run
 
 Install Rust and Cargo with support for the Rust 2024 edition, along with the

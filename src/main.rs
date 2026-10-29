@@ -8,6 +8,7 @@ use gpui_kit::*;
 actions!(ruie, [Quit, ToggleTheme, About]);
 
 fn main() {
+    browser::disable_keychain_prompts().expect("configure embedded browser keychain access");
     #[cfg(feature = "visual-check")]
     if std::env::var_os("RUIE_VISUAL_CHECK").is_some() {
         workspace::visual_check::run();

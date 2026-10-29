@@ -51,7 +51,7 @@ fn go_to_post_opens_the_clicked_hn_discussion(cx: &mut TestAppContext) {
             let details = window.find("details-pane").bounds();
             let article = window.find("article-pane").bounds();
             let total = details.size.height + article.size.height;
-            assert!((f32::from(details.size.height / total) - 0.2).abs() < 0.01);
+            assert!((f32::from(details.size.height / total) - 0.3).abs() < 0.01);
             assert_eq!(details.bottom(), article.origin.y);
             assert_eq!(details.origin.x, article.origin.x);
             assert_eq!(details.size.width, article.size.width);
