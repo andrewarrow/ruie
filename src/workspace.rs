@@ -342,24 +342,15 @@ impl Workspace {
     fn post_row(&self, post: &Item, index: usize, cx: &mut Context<Self>) -> AnyElement {
         let id = post.id;
         let selected = self.selected == Some(id);
-        let decision = self.store.decisions.get(&id).copied();
         let workspace = cx.entity().downgrade();
-        v_flex().id(("post", id)).w_full().min_w_0().px_5().py_4().gap_2()
+        h_flex().id(("post", id)).w_full().min_w_0().h_8().flex_shrink_0().px_4()
             .test_support()
             .relative().border_b_1().border_color(cx.theme().border)
             .when(selected, |el| el.child(div().absolute().left_0().top_0().bottom_0().w(px(2.)).bg(cx.theme().primary)))
             .when(selected, |el| el.bg(cx.theme().list_active))
             .hover(|style| style.bg(cx.theme().list_hover))
             .cursor_pointer()
-            .child(h_flex().gap_2().text_xs().text_color(cx.theme().muted_foreground)
-                .child(div().min_w_0().truncate().flex_1().child(post.domain()))
-                .when_some(decision, |el, decision| el.child(div().text_color(cx.theme().primary).child(decision.label())))
-                .child(hn::age(post.time)))
-            .child(div().text_sm().font_semibold().line_height(rems(1.4)).child(post.title()))
-            .child(h_flex().gap_3().text_xs().text_color(cx.theme().muted_foreground)
-                .child(h_flex().gap_1().child(Icon::new(IconName::ArrowUp).xsmall()).child(post.score.to_string()))
-                .child(h_flex().gap_1().child(Icon::new(IconName::MessageSquare).xsmall()).child(post.descendants.to_string()))
-                .child(div().min_w_0().truncate().child(format!("by {}", post.by))))
+            .child(div().flex_1().min_w_0().truncate().text_sm().font_semibold().child(post.title()))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select(Some(id), window, cx);
                 this.mobile_detail = true;
