@@ -1,0 +1,20 @@
+[package]
+name = "ruie-studio"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "An IDE-shaped, UI-only showcase for GPUI Kit."
+
+[dependencies]
+gpui-kit = { path = "../gpui-kit/crates/kit", features = ["syntect"] }
+
+[profile.dev]
+debug = "limited"
+split-debuginfo = "unpacked"
+
+[profile.dev.package.gpui-pre]
+opt-level = 3
+
+[profile.dev.package.gpui-pre-platform]
+opt-level = 3
+
