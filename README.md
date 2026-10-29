@@ -20,13 +20,14 @@ binary are named `ruie-studio`.
 - Searches by title, site, or author.
 - Displays articles in an embedded browser with back, forward, reload, and an
   option to open the page in your default browser.
-- Opens a post's Hacker News discussion in the Details tab.
+- Shows the Hacker News discussion above the article in two independently
+  navigable embedded browsers.
 - Saves review decisions locally, with undo for reviews.
 - Supports light and dark appearances and compact window layouts.
 
 Review labels are local queues. Marking a post as Spam does not flag it on HN,
-and selecting Upvote does not cast a vote. Use the **Details** tab to vote or
-reply on the discussion page. No API key is required.
+and selecting Upvote does not cast a vote. Use the upper discussion pane to vote
+or reply on Hacker News. No API key is required.
 
 ## Build and run
 
@@ -71,8 +72,8 @@ Previously saved posts and reviews are loaded on startup.
 
 Select a post to read its article. Use the review controls or right-click a row
 to move it into a queue. Choose **Go to post** from a row's context menu to open
-that post's Hacker News discussion in **Details**. Reviewed posts can be moved
-back to Inbox or restored with Undo.
+that post's Hacker News discussion in the upper reader pane. Reviewed posts can
+be moved back to Inbox or restored with Undo.
 
 ### Keyboard shortcuts
 

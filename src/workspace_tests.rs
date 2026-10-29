@@ -28,9 +28,11 @@ fn go_to_post_opens_the_clicked_hn_discussion(cx: &mut TestAppContext) {
 
         cx.update_window(handle, |_, window, cx| {
             assert_eq!(workspace.read(cx).selected, Some(3));
-            let discussion = "https://news.ycombinator.com/item?id=2";
-            // Simulate a cached target after navigating away inside the webview.
-            workspace.update(cx, |view, _| view.browser_url = Some(discussion.into()));
+            // Simulate each retained webview having navigated independently.
+            workspace.update(cx, |view, _| {
+                view.details_browser.url = Some("https://news.ycombinator.com/item?id=1".into());
+                view.article_browser.url = Some("https://example.com/3".into());
+            });
             window.right_click(("post", 2u64), cx);
         }).unwrap();
         cx.run_until_parked();
@@ -41,22 +43,26 @@ fn go_to_post_opens_the_clicked_hn_discussion(cx: &mut TestAppContext) {
         cx.update_window(handle, |_, window, cx| {
             let view = workspace.read(cx);
             assert_eq!(view.selected, Some(2));
-            assert!(view.show_details);
             assert!(view.mobile_detail);
             assert!(view.post_menu.is_none());
-            assert_eq!(view.browser_target_url().as_deref(), Some("https://news.ycombinator.com/item?id=2"));
-            assert_eq!(view.browser_url, None);
-            window.click("show-article", cx);
+            assert_eq!(view.discussion_url().as_deref(), Some("https://news.ycombinator.com/item?id=2"));
+            assert_eq!(view.details_browser.url, None);
+            assert_eq!(view.article_browser.url.as_deref(), Some("https://example.com/3"));
+            let details = window.find("details-pane").bounds();
+            let article = window.find("article-pane").bounds();
+            let total = details.size.height + article.size.height;
+            assert!((f32::from(details.size.height / total) - 0.2).abs() < 0.01);
+            assert_eq!(details.bottom(), article.origin.y);
+            assert_eq!(details.origin.x, article.origin.x);
+            assert_eq!(details.size.width, article.size.width);
+            assert!(details.origin.x >= px(0.));
+            assert!(details.origin.y >= px(0.));
+            assert!(details.right() <= px(width));
+            assert!(article.bottom() <= px(height));
         }).unwrap();
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
-            assert!(!workspace.read(cx).show_details);
-            assert_eq!(workspace.read(cx).browser_target_url().as_deref(), Some("https://example.com/2"));
-            window.click("show-details", cx);
-        }).unwrap();
-        cx.run_until_parked();
-        cx.update_window(handle, |_, window, cx| {
-            assert!(workspace.read(cx).show_details);
+            assert_eq!(workspace.read(cx).article_url().as_deref(), Some("https://example.com/2"));
             if width < 860. {
                 window.click("back", cx);
                 assert!(!workspace.read(cx).mobile_detail);
@@ -70,7 +76,6 @@ fn go_to_post_opens_the_clicked_hn_discussion(cx: &mut TestAppContext) {
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             assert_eq!(workspace.read(cx).selected, Some(2));
-            assert!(workspace.read(cx).show_details);
             assert!(workspace.read(cx).mobile_detail);
             window.remove_window();
         }).unwrap();

@@ -30,11 +30,9 @@ pub fn open(cx: &mut App) {
 }
 
 struct Workspace {
-    browser: Option<Entity<crate::browser::Browser>>,
-    browser_url: Option<String>,
-    browser_error: Option<String>,
+    details_browser: BrowserPane,
+    article_browser: BrowserPane,
     browser_enabled: bool,
-    show_details: bool,
     store: Store,
     path: Option<PathBuf>,
     storage_error: Option<String>,
@@ -54,6 +52,13 @@ struct Workspace {
     _fetch: Task<()>,
     _poll: Task<()>,
     _subscriptions: Vec<Subscription>,
+}
+
+#[derive(Default)]
+struct BrowserPane {
+    browser: Option<Entity<crate::browser::Browser>>,
+    url: Option<String>,
+    error: Option<String>,
 }
 
 impl Workspace {
@@ -78,7 +83,7 @@ impl Workspace {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let mut this = Self {
-            browser: None, browser_url: None, browser_error: None, browser_enabled: live, show_details: false,
+            details_browser: BrowserPane::default(), article_browser: BrowserPane::default(), browser_enabled: live,
             store, path, storage_error, filter: Filter::Inbox, selected: None, search, focus,
             list_scroll: ScrollHandle::new(),
             loading: false, remaining: Vec::new(), error: None, notice: None, history: Vec::new(),
@@ -120,10 +125,11 @@ impl Workspace {
 
     fn select(&mut self, id: Option<u64>, _window: &mut Window, cx: &mut Context<Self>) {
         if self.selected != id {
-            if let Some(browser) = &self.browser { browser.read(cx).hide(); }
+            for pane in [&self.details_browser, &self.article_browser] {
+                if let Some(browser) = &pane.browser { browser.read(cx).hide(); }
+            }
         }
         self.selected = id;
-        self.show_details = false;
         cx.notify();
     }
 
@@ -223,35 +229,35 @@ impl Workspace {
         match filter { Filter::Inbox => IconName::Inbox, Filter::Upvote => IconName::ArrowUp, Filter::Comment => IconName::MessageSquare, Filter::Spam => IconName::Trash, Filter::All => IconName::List }
     }
 
-    fn sync_browser(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let url = self.browser_target_url();
-        if !visible || !self.browser_enabled || url.is_none() {
-            if let Some(browser) = &self.browser { browser.read(cx).hide(); }
+    fn sync_browser_pane(pane: &mut BrowserPane, label: &str, url: Option<String>, visible: bool, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if !visible || !enabled || url.is_none() {
+            if let Some(browser) = &pane.browser { browser.read(cx).hide(); }
             return;
         }
-        if let Some(browser) = &self.browser { browser.read(cx).show(); }
-        if self.browser_url == url { return; }
+        if let Some(browser) = &pane.browser { browser.read(cx).show(); }
+        if pane.url == url { return; }
         let url = url.unwrap();
-        self.browser_url = Some(url.clone());
-        self.browser_error = None;
-        if let Some(browser) = &self.browser {
+        pane.url = Some(url.clone());
+        pane.error = None;
+        if let Some(browser) = &pane.browser {
             browser.update(cx, |browser, cx| browser.load_url(&url, cx));
         } else {
-            match crate::browser::Browser::new(&url, window, cx) {
-                Ok(browser) => self.browser = Some(browser),
+            match crate::browser::Browser::new(&url, label, window, cx) {
+                Ok(browser) => pane.browser = Some(browser),
                 Err(error) => {
-                    eprintln!("Could not create article webview: {error:#}");
-                    self.browser_error = Some("Couldn't start the embedded browser. Retry or open the page in your browser.".into());
+                    eprintln!("Could not create embedded browser: {error:#}");
+                    pane.error = Some("Couldn't start the embedded browser. Retry or open the page in your browser.".into());
                 }
             }
         }
     }
 
-    fn browser_target_url(&self) -> Option<String> {
-        self.selected.and_then(|id| self.store.posts.get(&id)).map(|post| {
-            if self.show_details { post.discussion_url() }
-            else { post.article_url().unwrap_or_else(|| post.discussion_url()) }
-        })
+    fn discussion_url(&self) -> Option<String> {
+        self.selected.and_then(|id| self.store.posts.get(&id)).map(Item::discussion_url)
+    }
+
+    fn article_url(&self) -> Option<String> {
+        self.selected.and_then(|id| self.store.posts.get(&id)).map(|post| post.article_url().unwrap_or_else(|| post.discussion_url()))
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -357,8 +363,8 @@ impl Workspace {
                         this.post_menu = None;
                         this.select(Some(id), window, cx);
                         // A user may have navigated within the webview; force this item's HN page.
-                        this.browser_url = None;
-                        this.show_details = true;
+                        this.details_browser.url = None;
+                        this.details_browser.error = None;
                         this.mobile_detail = true;
                         window.focus(&this.focus, cx);
                         cx.notify();
@@ -402,23 +408,39 @@ impl Workspace {
             .into_any_element()
     }
 
+    fn browser_content(&self, details: bool, cx: &mut Context<Self>) -> AnyElement {
+        let pane = if details { &self.details_browser } else { &self.article_browser };
+        let url = pane.url.clone().or_else(|| if details { self.discussion_url() } else { self.article_url() }).unwrap_or_default();
+        if let Some(browser) = &pane.browser {
+            browser.clone().into_any_element()
+        } else {
+            v_flex().flex_1().min_h_0().px_2().py_1().gap_1()
+                .child(div().text_xs().text_color(cx.theme().muted_foreground)
+                    .child(pane.error.clone().unwrap_or_else(|| "Embedded browser is unavailable in this preview.".into())))
+                .child(h_flex().gap_1()
+                    .child(Button::new(if details { "retry-details-browser" } else { "retry-article-browser" }).xsmall().outline().label("Retry")
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let pane = if details { &mut this.details_browser } else { &mut this.article_browser };
+                            pane.url = None;
+                            pane.error = None;
+                            cx.notify();
+                        })))
+                    .child(Button::new(if details { "fallback-details-browser" } else { "fallback-article-browser" }).xsmall().ghost().label("Open in browser")
+                        .on_click(move |_, _, cx| cx.open_url(&url))))
+                .into_any_element()
+        }
+    }
+
     fn reader(&self, compact: bool, cx: &mut Context<Self>) -> AnyElement {
         let Some(post) = self.selected.and_then(|id| self.store.posts.get(&id)) else {
             return v_flex().flex_1().min_w_0().p_6().text_color(cx.theme().muted_foreground).child("Select a post to review.").into_any_element();
         };
         let id = post.id;
-        let url = self.browser_target_url().unwrap_or_else(|| post.discussion_url());
         let decision = self.store.decisions.get(&id).copied();
         v_flex().flex_1().min_w_0().min_h_0().h_full()
             .child(h_flex().h_12().px_5().gap_2().flex_shrink_0().border_b_1().border_color(cx.theme().border)
                 .when(compact, |el| el.child(Button::new("back").small().ghost().icon(IconName::ArrowLeft).label("Posts")
                     .on_click(cx.listener(|this, _, _, cx| { this.mobile_detail = false; cx.notify(); }))))
-                .child(Button::new("show-article").small().ghost().label("Article")
-                    .when(!self.show_details, |button| button.bg(cx.theme().list_active))
-                    .on_click(cx.listener(|this, _, _, cx| { this.show_details = false; cx.notify(); })))
-                .child(Button::new("show-details").small().ghost().label("Details")
-                    .when(self.show_details, |button| button.bg(cx.theme().list_active))
-                    .on_click(cx.listener(|this, _, _, cx| { this.show_details = true; cx.notify(); })))
                 .child(div().flex_1())
                 .when_some(decision, |el, decision| el.child(div().text_xs().text_color(cx.theme().primary).child(decision.label())))
                 .when(decision.is_some(), |el| el.child(Button::new("move-inbox").small().ghost().icon(IconName::Inbox).tooltip("Move back to inbox").accessibility_label("Move back to inbox")
@@ -427,18 +449,11 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, window, cx| this.navigate(-1, window, cx))))
                 .child(Button::new("next").small().ghost().icon(IconName::ChevronDown).tooltip("Next post · J").accessibility_label("Next post")
                     .on_click(cx.listener(|this, _, window, cx| this.navigate(1, window, cx)))))
-            .child(if let Some(browser) = &self.browser {
-                div().flex_1().min_h_0().child(browser.clone()).into_any_element()
-            } else {
-                v_flex().flex_1().p_5().gap_3()
-                    .child(self.browser_error.clone().unwrap_or_else(|| "Embedded browser is unavailable in this preview.".into()))
-                    .child(h_flex().gap_2()
-                        .child(Button::new("retry-browser").small().outline().label("Retry")
-                            .on_click(cx.listener(|this, _, _, cx| { this.browser_url = None; cx.notify(); })))
-                        .child(Button::new("fallback-browser").small().ghost().label("Open in browser")
-                            .on_click(move |_, _, cx| cx.open_url(&url))))
-                    .into_any_element()
-            })
+            .child(v_flex().flex_1().min_h_0().overflow_hidden().items_stretch()
+                .child(div().id("details-pane").test_support().flex_1().flex_grow(1.).flex_shrink_1().flex_basis(px(0.)).min_h_0().min_w_0().overflow_hidden().border_b_1().border_color(cx.theme().border)
+                    .child(self.browser_content(true, cx)))
+                .child(div().id("article-pane").test_support().flex_1().flex_grow(4.).flex_shrink_1().flex_basis(px(0.)).min_h_0().min_w_0().overflow_hidden()
+                    .child(self.browser_content(false, cx))))
             .child(self.triage_bar(compact, cx))
             .into_any_element()
     }
@@ -453,7 +468,10 @@ impl Render for Workspace {
         // Native child webviews sit above GPUI overlays, so hide the current page while a menu is open.
         let post_menu_open = self.post_menu.as_ref().and_then(WeakEntity::upgrade).is_some();
         let page_visible = (!compact || self.mobile_detail) && !window.has_active_dialog(cx) && !post_menu_open;
-        self.sync_browser(page_visible, window, cx);
+        let discussion_url = self.discussion_url();
+        let article_url = self.article_url();
+        Self::sync_browser_pane(&mut self.details_browser, "Details", discussion_url, page_visible, self.browser_enabled, window, cx);
+        Self::sync_browser_pane(&mut self.article_browser, "Article", article_url, page_visible, self.browser_enabled, window, cx);
         v_flex().id("workspace").track_focus(&self.focus).size_full()
             .bg(cx.theme().background).text_color(cx.theme().foreground).text_sm()
             .on_action(|_: &ToggleTheme, _, cx| crate::theme::install(cx, cx.theme().mode != ThemeMode::Dark))

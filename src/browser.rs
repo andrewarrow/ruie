@@ -2,7 +2,7 @@
 use std::{cell::{Cell, RefCell}, rc::Rc};
 
 use futures::{StreamExt, channel::mpsc};
-use gpui_kit::{component::{ActiveTheme, Sizable, button::{Button, ButtonVariants}, h_flex, v_flex}, *};
+use gpui_kit::{component::{ActiveTheme, Sizable, StyledExt, button::{Button, ButtonVariants}, h_flex, v_flex}, *};
 use gpui_kit::assets::IconName;
 use gpui_kit::prelude::FluentBuilder;
 
@@ -13,6 +13,7 @@ enum PageEvent {
 
 pub(crate) struct Browser {
     raw: Rc<wry::WebView>,
+    label: String,
     url: String,
     loading: bool,
     error: Option<String>,
@@ -27,7 +28,7 @@ pub(crate) fn is_web_url(value: &str) -> bool {
 }
 
 impl Browser {
-    pub(crate) fn new(url: &str, window: &mut Window, cx: &mut App) -> anyhow::Result<Entity<Self>> {
+    pub(crate) fn new(url: &str, label: &str, window: &mut Window, cx: &mut App) -> anyhow::Result<Entity<Self>> {
         anyhow::ensure!(is_web_url(url), "Expected an HTTP or HTTPS URL");
         let (sender, mut receiver) = mpsc::channel(16);
         let loads = RefCell::new(sender.clone());
@@ -56,6 +57,7 @@ impl Browser {
 
         Ok(cx.new(|cx: &mut Context<Self>| Self {
             raw: Rc::new(raw),
+            label: label.to_owned(),
             url: url.to_owned(),
             loading: true,
             error: None,
@@ -118,6 +120,7 @@ impl Render for Browser {
                 .child(Button::new("web-reload").small().ghost().icon(IconName::RefreshCw)
                     .accessibility_label("Reload page").tooltip("Reload page")
                     .on_click(cx.listener(|this, _, _, cx| this.command(this.raw.reload(), cx))))
+                .child(div().text_xs().font_medium().child(self.label.clone()))
                 .child(div().flex_1().min_w_0().px_2().truncate().text_xs().text_color(cx.theme().muted_foreground).child(self.url.clone()))
                 .when(self.loading, |el| el.child(div().text_xs().text_color(cx.theme().muted_foreground).child("Loading…")))
                 .child(Button::new("web-external").small().ghost().icon(IconName::ExternalLink)
