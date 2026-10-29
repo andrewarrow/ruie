@@ -1,4 +1,4 @@
-# RUIE
+# RUIE - rust desktop app to triage hackernews articles
 
 ```
 Relevance
