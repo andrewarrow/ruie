@@ -343,14 +343,15 @@ impl Workspace {
         let id = post.id;
         let selected = self.selected == Some(id);
         let workspace = cx.entity().downgrade();
-        h_flex().id(("post", id)).w_full().min_w_0().h_8().flex_shrink_0().px_4()
+        v_flex().id(("post", id)).w_full().min_w_0().h_12().flex_shrink_0().justify_center().px_4()
             .test_support()
             .relative().border_b_1().border_color(cx.theme().border)
             .when(selected, |el| el.child(div().absolute().left_0().top_0().bottom_0().w(px(2.)).bg(cx.theme().primary)))
             .when(selected, |el| el.bg(cx.theme().list_active))
             .hover(|style| style.bg(cx.theme().list_hover))
             .cursor_pointer()
-            .child(div().flex_1().min_w_0().truncate().text_sm().font_semibold().child(post.title()))
+            .child(div().w_full().min_w_0().truncate().text_sm().child(post.title()))
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child(hn::age(post.time)))
             .on_click(cx.listener(move |this, _, window, cx| {
                 this.select(Some(id), window, cx);
                 this.mobile_detail = true;
