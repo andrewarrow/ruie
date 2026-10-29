@@ -138,6 +138,9 @@ impl Workspace {
     }
 
     fn select(&mut self, id: Option<u64>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.selected != id {
+            if let Some(browser) = &self.browser { browser.read(cx).hide(); }
+        }
         self.selected = id;
         self.show_details = false;
         let text = id.and_then(|id| self.store.drafts.get(&id)).cloned().unwrap_or_default();

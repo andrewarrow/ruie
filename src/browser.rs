@@ -81,6 +81,8 @@ impl Browser {
         if !is_web_url(url) { return; }
         self.url = url.to_owned();
         self.loading = true;
+        // Keep the previous document out of view until this navigation finishes.
+        let _ = self.raw.set_visible(false);
         self.error = self.raw.load_url(url).err().map(|_| "Couldn't load this page. Try Reload or open it in your browser.".into());
         cx.notify();
     }
@@ -125,6 +127,10 @@ impl Render for Browser {
             .child(div().flex_1().min_h_0().occlude().child(canvas(
                 move |bounds, window, cx| {
                     let _ = view.update(cx, |this, cx| {
+                        if this.loading || this.error.is_some() {
+                            let _ = this.raw.set_visible(false);
+                            return;
+                        }
                         if !this.visible.get() { return; }
                         let visible = bounds.intersect(&window.content_mask().bounds);
                         if visible.is_empty() { this.hide(); return; }
