@@ -1,5 +1,12 @@
 # RUIE
 
+```
+Relevance
+Usefulness & 
+Importance 
+Evaluator
+```
+
 ![RUIE](docs/screenshot-001.png)
 
 A native desktop inbox for reviewing new Hacker News posts, built with Rust,
