@@ -1,4 +1,6 @@
-# Ruie
+# RUIE
+
+![RUIE](docs/screenshot-001.png)
 
 A native desktop inbox for reviewing new Hacker News posts, built with Rust,
 GPUI Kit, and Wry. The application opens as **HN Review**; the Cargo package and
