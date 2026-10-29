@@ -4,7 +4,7 @@ use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Sizable, StyledExt, ThemeMode, TitleBar, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
-    menu::{ContextMenuExt, PopupMenuItem},
+    menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
     text::TextView,
     h_flex, v_flex,
 };
@@ -55,6 +55,8 @@ struct Workspace {
     comments_loading: bool,
     comments_error: Option<String>,
     mobile_detail: bool,
+    post_menu: Option<WeakEntity<PopupMenu>>,
+    _post_menu: Option<Subscription>,
     _fetch: Task<()>,
     _comments: Task<()>,
     _poll: Task<()>,
@@ -100,6 +102,7 @@ impl Workspace {
             list_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(),
             loading: false, remaining: Vec::new(), error: None, notice: None, history: Vec::new(),
             comments: HashMap::new(), comments_loading: false, comments_error: None, mobile_detail: false,
+            post_menu: None, _post_menu: None,
             _fetch: Task::ready(()), _comments: Task::ready(()), _poll: Task::ready(()), _subscriptions: subscriptions,
         };
         this.ensure_selection(window, cx);
@@ -366,6 +369,15 @@ impl Workspace {
             .context_menu(move |menu, _, cx| {
                 let Some(view) = workspace.upgrade() else { return menu; };
                 let current = view.read(cx).store.decisions.get(&id).copied();
+                let menu_entity = cx.entity();
+                view.update(cx, |this, cx| {
+                    this.post_menu = Some(menu_entity.downgrade());
+                    this._post_menu = Some(cx.subscribe(&menu_entity, |this, _, _: &DismissEvent, cx| {
+                        this.post_menu = None;
+                        cx.notify();
+                    }));
+                    cx.notify();
+                });
                 let mut menu = menu.label("Move to");
                 for decision in [Decision::Upvote, Decision::Comment, Decision::Spam] {
                     let workspace = workspace.clone();
@@ -518,7 +530,9 @@ impl Render for Workspace {
         let width = window.viewport_size().width;
         let compact = width < px(860.);
         let sidebar = width >= px(1100.);
-        let page_visible = !self.show_details && (!compact || self.mobile_detail) && !window.has_active_dialog(cx);
+        // Native child webviews sit above GPUI overlays, so hide the article while a menu is open.
+        let post_menu_open = self.post_menu.as_ref().and_then(WeakEntity::upgrade).is_some();
+        let page_visible = !self.show_details && (!compact || self.mobile_detail) && !window.has_active_dialog(cx) && !post_menu_open;
         self.sync_browser(page_visible, window, cx);
         v_flex().id("workspace").track_focus(&self.focus).size_full()
             .bg(cx.theme().background).text_color(cx.theme().foreground).text_sm()

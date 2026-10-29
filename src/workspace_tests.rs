@@ -35,6 +35,10 @@ fn post_context_menu_moves_the_clicked_post_and_supports_undo(cx: &mut TestAppCo
             }).unwrap();
             cx.run_until_parked();
             cx.update_window(handle, |_, window, cx| {
+                let bounds = window.find("popup-menu").bounds();
+                assert!(bounds.origin.x >= px(0.) && bounds.right() <= px(width));
+                assert!(bounds.origin.y >= px(0.) && bounds.bottom() <= px(height));
+                assert!(workspace.read(cx).post_menu.is_some());
                 window.within("popup-menu").click(index + 1, cx);
             }).unwrap();
             cx.run_until_parked();
@@ -43,6 +47,7 @@ fn post_context_menu_moves_the_clicked_post_and_supports_undo(cx: &mut TestAppCo
                 assert_eq!(view.store.decisions.get(&2), Some(&decision));
                 assert_eq!(view.store.count(Filter::Inbox), 2);
                 assert_eq!(view.selected, Some(3));
+                assert!(view.post_menu.is_none());
                 assert_eq!(view.store.drafts[&3], "Keep this draft");
                 assert_eq!(Store::load(&path).unwrap().decisions.get(&2), Some(&decision));
                 workspace.update(cx, |view, cx| view.undo(window, cx));
@@ -63,9 +68,19 @@ fn post_context_menu_moves_the_clicked_post_and_supports_undo(cx: &mut TestAppCo
         }).unwrap();
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
-            assert_eq!(window.within("popup-menu").find(1usize).disabled(), Some(true));
-            window.within("popup-menu").click(2usize, cx);
+            window.within("popup-menu").click(1usize, cx);
+            assert_eq!(workspace.read(cx).store.decisions.get(&3), Some(&Decision::Upvote));
+            assert!(window.try_find("popup-menu").is_some());
+            window.press("escape", cx);
         }).unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            assert!(workspace.read(cx).post_menu.is_none());
+            assert!(window.try_find("popup-menu").is_none());
+            window.right_click(("post", 3u64), cx);
+        }).unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| window.within("popup-menu").click(2usize, cx)).unwrap();
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             assert_eq!(workspace.read(cx).store.count(Filter::Upvote), 0);
