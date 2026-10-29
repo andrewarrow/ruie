@@ -5,6 +5,9 @@ edition = "2024"
 publish = false
 description = "An IDE-shaped, UI-only showcase for GPUI Kit."
 
+[features]
+visual-check = ["gpui-kit/test-support"]
+
 [dependencies]
 gpui-kit = { path = "../gpui-kit/crates/kit", features = ["syntect"] }
 
