@@ -1,4 +1,5 @@
 mod hn;
+mod browser;
 mod model;
 mod theme;
 mod workspace;

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, path::PathBuf};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Icon, Sizable, StyledExt, ThemeMode, TitleBar,
+    ActiveTheme, Disableable, Icon, Sizable, StyledExt, ThemeMode, TitleBar, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
     text::TextView,
@@ -26,6 +26,11 @@ pub fn open(cx: &mut App) {
 }
 
 struct Workspace {
+    browser: Option<Entity<crate::browser::Browser>>,
+    browser_url: Option<String>,
+    browser_error: Option<String>,
+    browser_enabled: bool,
+    show_details: bool,
     store: Store,
     path: Option<PathBuf>,
     storage_error: Option<String>,
@@ -85,6 +90,7 @@ impl Workspace {
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let mut this = Self {
+            browser: None, browser_url: None, browser_error: None, browser_enabled: live, show_details: false,
             store, path, storage_error, filter: Filter::Inbox, selected: None, search, draft, focus,
             list_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(),
             loading: false, remaining: Vec::new(), error: None, notice: None, history: Vec::new(),
@@ -125,6 +131,7 @@ impl Workspace {
 
     fn select(&mut self, id: Option<u64>, window: &mut Window, cx: &mut Context<Self>) {
         self.selected = id;
+        self.show_details = false;
         let text = id.and_then(|id| self.store.drafts.get(&id)).cloned().unwrap_or_default();
         self.draft.update(cx, |state, cx| state.set_value(text, window, cx));
         self.detail_scroll.set_offset(Default::default());
@@ -248,6 +255,31 @@ impl Workspace {
         match filter { Filter::Inbox => IconName::Inbox, Filter::Upvote => IconName::ArrowUp, Filter::Comment => IconName::MessageSquare, Filter::Spam => IconName::Trash, Filter::All => IconName::List }
     }
 
+    fn sync_browser(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let url = self.selected.and_then(|id| self.store.posts.get(&id))
+            .map(|post| post.article_url().unwrap_or_else(|| post.discussion_url()));
+        if !visible || !self.browser_enabled || url.is_none() {
+            if let Some(browser) = &self.browser { browser.read(cx).hide(); }
+            return;
+        }
+        if let Some(browser) = &self.browser { browser.read(cx).show(); }
+        if self.browser_url == url { return; }
+        let url = url.unwrap();
+        self.browser_url = Some(url.clone());
+        self.browser_error = None;
+        if let Some(browser) = &self.browser {
+            browser.update(cx, |browser, cx| browser.load_url(&url, cx));
+        } else {
+            match crate::browser::Browser::new(&url, window, cx) {
+                Ok(browser) => self.browser = Some(browser),
+                Err(error) => {
+                    eprintln!("Could not create article webview: {error:#}");
+                    self.browser_error = Some("Couldn't start the embedded browser. Retry or open the page in your browser.".into());
+                }
+            }
+        }
+    }
+
     fn sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
         v_flex().w(px(196.)).flex_shrink_0().h_full().bg(cx.theme().sidebar)
             .border_r_1().border_color(cx.theme().border).px_3().py_5().gap_1()
@@ -365,7 +397,12 @@ impl Workspace {
             .child(h_flex().h_12().px_5().gap_2().flex_shrink_0().border_b_1().border_color(cx.theme().border)
                 .when(compact, |el| el.child(Button::new("back").small().ghost().icon(IconName::ArrowLeft).label("Posts")
                     .on_click(cx.listener(|this, _, _, cx| { this.mobile_detail = false; cx.notify(); }))))
-                .when(!compact, |el| el.child(div().text_xs().text_color(cx.theme().muted_foreground).child("Post details")))
+                .child(Button::new("show-article").small().ghost().label("Article")
+                    .when(!self.show_details, |button| button.bg(cx.theme().list_active))
+                    .on_click(cx.listener(|this, _, _, cx| { this.show_details = false; cx.notify(); })))
+                .child(Button::new("show-details").small().ghost().label("Details")
+                    .when(self.show_details, |button| button.bg(cx.theme().list_active))
+                    .on_click(cx.listener(|this, _, _, cx| { this.show_details = true; cx.notify(); })))
                 .child(div().flex_1())
                 .when_some(decision, |el, decision| el.child(div().text_xs().text_color(cx.theme().primary).child(decision.label())))
                 .when(decision.is_some(), |el| el.child(Button::new("move-inbox").small().ghost().icon(IconName::Inbox).tooltip("Move back to inbox").accessibility_label("Move back to inbox")
@@ -374,7 +411,21 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, window, cx| this.navigate(-1, window, cx))))
                 .child(Button::new("next").small().ghost().icon(IconName::ChevronDown).tooltip("Next post · J").accessibility_label("Next post")
                     .on_click(cx.listener(|this, _, window, cx| this.navigate(1, window, cx)))))
-            .child(v_flex().id("reader-scroll").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.detail_scroll).p_6().gap_4()
+            .when(!self.show_details, |el| {
+                if let Some(browser) = &self.browser {
+                    el.child(div().flex_1().min_h_0().child(browser.clone()))
+                } else {
+                    let url = post.article_url().unwrap_or_else(|| post.discussion_url());
+                    el.child(v_flex().flex_1().p_5().gap_3()
+                        .child(self.browser_error.clone().unwrap_or_else(|| "Embedded browser is unavailable in this preview.".into()))
+                        .child(h_flex().gap_2()
+                            .child(Button::new("retry-browser").small().outline().label("Retry")
+                                .on_click(cx.listener(|this, _, _, cx| { this.browser_url = None; cx.notify(); })))
+                            .child(Button::new("fallback-browser").small().ghost().label("Open in browser")
+                                .on_click(move |_, _, cx| cx.open_url(&url)))))
+                }
+            })
+            .when(self.show_details, |el| el.child(v_flex().id("reader-scroll").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.detail_scroll).p_6().gap_4()
                 .child(div().text_xs().text_color(cx.theme().muted_foreground).child(post.domain()))
                 .child(div().text_xl().font_semibold().line_height(rems(1.9)).child(post.title()))
                 .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{} points · by {} · {}", post.score, post.by, hn::age(post.time))))
@@ -420,7 +471,7 @@ impl Workspace {
                     let url = post.discussion_url();
                     el.child(Button::new("all-comments").small().ghost().label("Full discussion on Hacker News ↗")
                         .on_click(move |_, _, cx| cx.open_url(&url)))
-                }))
+                })))
             .child(self.triage_bar(compact, cx))
             .into_any_element()
     }
@@ -432,6 +483,8 @@ impl Render for Workspace {
         let width = window.viewport_size().width;
         let compact = width < px(860.);
         let sidebar = width >= px(1100.);
+        let page_visible = !self.show_details && (!compact || self.mobile_detail) && !window.has_active_dialog(cx);
+        self.sync_browser(page_visible, window, cx);
         v_flex().id("workspace").track_focus(&self.focus).size_full()
             .bg(cx.theme().background).text_color(cx.theme().foreground).text_sm()
             .on_action(|_: &ToggleTheme, _, cx| crate::theme::install(cx, cx.theme().mode != ThemeMode::Dark))
