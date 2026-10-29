@@ -1,11 +1,10 @@
-use std::{collections::HashMap, path::PathBuf};
+use std::path::PathBuf;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, Sizable, StyledExt, ThemeMode, TitleBar, WindowExt,
     button::{Button, ButtonVariants},
-    input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    input::{Input, InputEvent, InputState},
     menu::{ContextMenuExt, PopupMenu, PopupMenuItem},
-    text::TextView,
     h_flex, v_flex,
 };
 use gpui_kit::{prelude::FluentBuilder, *};
@@ -42,23 +41,17 @@ struct Workspace {
     filter: Filter,
     selected: Option<u64>,
     search: Entity<InputState>,
-    draft: Entity<TextareaState>,
     focus: FocusHandle,
     list_scroll: ScrollHandle,
-    detail_scroll: ScrollHandle,
     loading: bool,
     remaining: Vec<u64>,
     error: Option<String>,
     notice: Option<String>,
     history: Vec<(u64, Option<Decision>)>,
-    comments: HashMap<u64, Vec<Item>>,
-    comments_loading: bool,
-    comments_error: Option<String>,
     mobile_detail: bool,
     post_menu: Option<WeakEntity<PopupMenu>>,
     _post_menu: Option<Subscription>,
     _fetch: Task<()>,
-    _comments: Task<()>,
     _poll: Task<()>,
     _subscriptions: Vec<Subscription>,
 }
@@ -73,7 +66,6 @@ impl Workspace {
             None => (Store::default(), None),
         };
         let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search title, site, or author…"));
-        let draft = cx.new(|cx| TextareaState::new(window, cx).rows(5).placeholder("Add something useful to the discussion…"));
         let subscriptions = vec![
             cx.subscribe_in(&search, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -82,28 +74,17 @@ impl Workspace {
                     cx.notify();
                 }
             }),
-            cx.subscribe(&draft, |this, draft, event, cx| {
-                if matches!(event, InputEvent::Change) {
-                    if let Some(id) = this.selected {
-                        let text = draft.read(cx).value().to_string();
-                        if text.trim().is_empty() { this.store.drafts.remove(&id); }
-                        else { this.store.drafts.insert(id, text); }
-                        this.save();
-                        cx.notify();
-                    }
-                }
-            }),
         ];
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         let mut this = Self {
             browser: None, browser_url: None, browser_error: None, browser_enabled: live, show_details: false,
-            store, path, storage_error, filter: Filter::Inbox, selected: None, search, draft, focus,
-            list_scroll: ScrollHandle::new(), detail_scroll: ScrollHandle::new(),
+            store, path, storage_error, filter: Filter::Inbox, selected: None, search, focus,
+            list_scroll: ScrollHandle::new(),
             loading: false, remaining: Vec::new(), error: None, notice: None, history: Vec::new(),
-            comments: HashMap::new(), comments_loading: false, comments_error: None, mobile_detail: false,
+            mobile_detail: false,
             post_menu: None, _post_menu: None,
-            _fetch: Task::ready(()), _comments: Task::ready(()), _poll: Task::ready(()), _subscriptions: subscriptions,
+            _fetch: Task::ready(()), _poll: Task::ready(()), _subscriptions: subscriptions,
         };
         this.ensure_selection(window, cx);
         if live {
@@ -137,16 +118,12 @@ impl Workspace {
         if self.selected != next { self.select(next, window, cx); }
     }
 
-    fn select(&mut self, id: Option<u64>, window: &mut Window, cx: &mut Context<Self>) {
+    fn select(&mut self, id: Option<u64>, _window: &mut Window, cx: &mut Context<Self>) {
         if self.selected != id {
             if let Some(browser) = &self.browser { browser.read(cx).hide(); }
         }
         self.selected = id;
         self.show_details = false;
-        let text = id.and_then(|id| self.store.drafts.get(&id)).cloned().unwrap_or_default();
-        self.draft.update(cx, |state, cx| state.set_value(text, window, cx));
-        self.detail_scroll.set_offset(Default::default());
-        self.load_comments(cx);
         cx.notify();
     }
 
@@ -242,40 +219,12 @@ impl Workspace {
         cx.notify();
     }
 
-    fn load_comments(&mut self, cx: &mut Context<Self>) {
-        self._comments = Task::ready(());
-        self.comments_loading = false;
-        self.comments_error = None;
-        let Some(id) = self.selected else { return; };
-        if self.comments.contains_key(&id) { return; }
-        let ids: Vec<_> = self.store.posts.get(&id).map(|post| post.kids.iter().take(20).copied().collect()).unwrap_or_default();
-        if ids.is_empty() { self.comments.insert(id, Vec::new()); return; }
-        self.comments_loading = true;
-        let client = cx.http_client();
-        self._comments = cx.spawn(async move |this, cx| {
-            let (mut comments, failed) = cx.background_spawn(async move {
-                let (mut items, failed) = hn::items(client, ids.clone()).await;
-                items.sort_by_key(|item| ids.iter().position(|id| *id == item.id).unwrap_or(usize::MAX));
-                (items, failed)
-            }).await;
-            comments.retain(|comment| !comment.deleted && !comment.dead && comment.kind == "comment");
-            let _ = this.update(cx, |this, cx| {
-                if this.selected != Some(id) { return; }
-                this.comments_loading = false;
-                if failed > 0 { this.comments_error = Some("Some comments couldn't be loaded.".into()); }
-                if failed == 0 || !comments.is_empty() { this.comments.insert(id, comments); }
-                cx.notify();
-            });
-        });
-    }
-
     fn filter_icon(filter: Filter) -> IconName {
         match filter { Filter::Inbox => IconName::Inbox, Filter::Upvote => IconName::ArrowUp, Filter::Comment => IconName::MessageSquare, Filter::Spam => IconName::Trash, Filter::All => IconName::List }
     }
 
     fn sync_browser(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let url = self.selected.and_then(|id| self.store.posts.get(&id))
-            .map(|post| post.article_url().unwrap_or_else(|| post.discussion_url()));
+        let url = self.browser_target_url();
         if !visible || !self.browser_enabled || url.is_none() {
             if let Some(browser) = &self.browser { browser.read(cx).hide(); }
             return;
@@ -296,6 +245,13 @@ impl Workspace {
                 }
             }
         }
+    }
+
+    fn browser_target_url(&self) -> Option<String> {
+        self.selected.and_then(|id| self.store.posts.get(&id)).map(|post| {
+            if self.show_details { post.discussion_url() }
+            else { post.article_url().unwrap_or_else(|| post.discussion_url()) }
+        })
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -380,15 +336,34 @@ impl Workspace {
                         .checked(current == Some(decision))
                         .disabled(current == Some(decision))
                         .on_click(move |_, window, cx| {
-                            let _ = workspace.update(cx, |this, cx| this.decide_post(id, Some(decision), window, cx));
+                            let _ = workspace.update(cx, |this, cx| {
+                                this.post_menu = None;
+                                this.decide_post(id, Some(decision), window, cx);
+                            });
                         }));
                 }
                 if current.is_some() {
                     let workspace = workspace.clone();
                     menu = menu.separator().item(PopupMenuItem::new("Inbox").on_click(move |_, window, cx| {
-                        let _ = workspace.update(cx, |this, cx| this.decide_post(id, None, window, cx));
+                        let _ = workspace.update(cx, |this, cx| {
+                            this.post_menu = None;
+                            this.decide_post(id, None, window, cx);
+                        });
                     }));
                 }
+                let workspace = workspace.clone();
+                menu = menu.separator().item(PopupMenuItem::new("Go to post").on_click(move |_, window, cx| {
+                    let _ = workspace.update(cx, |this, cx| {
+                        this.post_menu = None;
+                        this.select(Some(id), window, cx);
+                        // A user may have navigated within the webview; force this item's HN page.
+                        this.browser_url = None;
+                        this.show_details = true;
+                        this.mobile_detail = true;
+                        window.focus(&this.focus, cx);
+                        cx.notify();
+                    });
+                }));
                 menu
             })
             .into_any_element()
@@ -432,8 +407,7 @@ impl Workspace {
             return v_flex().flex_1().min_w_0().p_6().text_color(cx.theme().muted_foreground).child("Select a post to review.").into_any_element();
         };
         let id = post.id;
-        let discussion_url = post.discussion_url();
-        let article = post.article_url();
+        let url = self.browser_target_url().unwrap_or_else(|| post.discussion_url());
         let decision = self.store.decisions.get(&id).copied();
         v_flex().flex_1().min_w_0().min_h_0().h_full()
             .child(h_flex().h_12().px_5().gap_2().flex_shrink_0().border_b_1().border_color(cx.theme().border)
@@ -453,67 +427,18 @@ impl Workspace {
                     .on_click(cx.listener(|this, _, window, cx| this.navigate(-1, window, cx))))
                 .child(Button::new("next").small().ghost().icon(IconName::ChevronDown).tooltip("Next post · J").accessibility_label("Next post")
                     .on_click(cx.listener(|this, _, window, cx| this.navigate(1, window, cx)))))
-            .when(!self.show_details, |el| {
-                if let Some(browser) = &self.browser {
-                    el.child(div().flex_1().min_h_0().child(browser.clone()))
-                } else {
-                    let url = post.article_url().unwrap_or_else(|| post.discussion_url());
-                    el.child(v_flex().flex_1().p_5().gap_3()
-                        .child(self.browser_error.clone().unwrap_or_else(|| "Embedded browser is unavailable in this preview.".into()))
-                        .child(h_flex().gap_2()
-                            .child(Button::new("retry-browser").small().outline().label("Retry")
-                                .on_click(cx.listener(|this, _, _, cx| { this.browser_url = None; cx.notify(); })))
-                            .child(Button::new("fallback-browser").small().ghost().label("Open in browser")
-                                .on_click(move |_, _, cx| cx.open_url(&url)))))
-                }
+            .child(if let Some(browser) = &self.browser {
+                div().flex_1().min_h_0().child(browser.clone()).into_any_element()
+            } else {
+                v_flex().flex_1().p_5().gap_3()
+                    .child(self.browser_error.clone().unwrap_or_else(|| "Embedded browser is unavailable in this preview.".into()))
+                    .child(h_flex().gap_2()
+                        .child(Button::new("retry-browser").small().outline().label("Retry")
+                            .on_click(cx.listener(|this, _, _, cx| { this.browser_url = None; cx.notify(); })))
+                        .child(Button::new("fallback-browser").small().ghost().label("Open in browser")
+                            .on_click(move |_, _, cx| cx.open_url(&url))))
+                    .into_any_element()
             })
-            .when(self.show_details, |el| el.child(v_flex().id("reader-scroll").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.detail_scroll).p_6().gap_4()
-                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(post.domain()))
-                .child(div().text_xl().font_semibold().line_height(rems(1.9)).child(post.title()))
-                .child(div().text_xs().text_color(cx.theme().muted_foreground).child(format!("{} points · by {} · {}", post.score, post.by, hn::age(post.time))))
-                .child(h_flex().gap_2().flex_wrap()
-                    .when_some(article, |el, url| el.child(Button::new("open-article").small().outline().icon(IconName::ExternalLink).label("Read article").on_click(move |_, _, cx| cx.open_url(&url))))
-                    .child(Button::new("open-hn").small().ghost().icon(IconName::ExternalLink).label("Open on HN")
-                        .on_click(move |_, _, cx| cx.open_url(&discussion_url))))
-                .when(!post.text.is_empty(), |el| el.child(TextView::html(("story-body", id), post.text.clone()).selectable(true)))
-                .when(decision == Some(Decision::Comment), |el| {
-                    let url = post.discussion_url();
-                    el.child(v_flex().gap_2().mt_2()
-                        .child(div().font_medium().child("Comment draft"))
-                        .child(Textarea::new(&self.draft).h(px(144.)).aria_label("Comment draft saved on this device"))
-                        .child(h_flex().gap_2().flex_wrap()
-                            .child(Button::new("copy-draft").small().outline().icon(IconName::Copy).label("Copy & open HN")
-                                .disabled(self.draft.read(cx).value().trim().is_empty())
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.write_to_clipboard(ClipboardItem::new_string(this.draft.read(cx).value().to_string()));
-                                    cx.open_url(&url);
-                                    this.notice = Some("Draft copied. Paste it into the discussion on Hacker News.".into());
-                                    cx.notify();
-                                })))
-                            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("Saved locally"))))
-                })
-                .child(h_flex().mt_4().gap_2()
-                    .child(div().font_semibold().child("Comments"))
-                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child(post.descendants.to_string()))
-                    .child(div().flex_1())
-                    .child(Button::new("refresh-comments").xsmall().ghost().icon(IconName::RefreshCw).disabled(self.comments_loading)
-                        .tooltip("Refresh comments").accessibility_label("Refresh comments")
-                        .on_click(cx.listener(move |this, _, _, cx| { this.comments.remove(&id); this.load_comments(cx); cx.notify(); }))))
-                .when(self.comments_loading, |el| el.child(div().text_color(cx.theme().muted_foreground).child("Loading comments…")))
-                .when_some(self.comments_error.clone(), |el, error| el.child(div().text_color(cx.theme().muted_foreground).child(error)))
-                .when(!self.comments_loading && self.comments.get(&id).is_some_and(Vec::is_empty), |el| el.child(div().text_color(cx.theme().muted_foreground).child("No comments yet.")))
-                .children(self.comments.get(&id).into_iter().flatten().map(|comment| {
-                    v_flex().gap_2().py_3().border_t_1().border_color(cx.theme().border)
-                        .child(h_flex().gap_2().text_xs()
-                            .child(div().font_medium().child(comment.by.clone()))
-                            .child(div().text_color(cx.theme().muted_foreground).child(hn::age(comment.time))))
-                        .child(TextView::html(("comment", comment.id), comment.text.clone()).selectable(true))
-                }))
-                .when(post.descendants > 0, |el| {
-                    let url = post.discussion_url();
-                    el.child(Button::new("all-comments").small().ghost().label("Full discussion on Hacker News ↗")
-                        .on_click(move |_, _, cx| cx.open_url(&url)))
-                })))
             .child(self.triage_bar(compact, cx))
             .into_any_element()
     }
@@ -525,16 +450,16 @@ impl Render for Workspace {
         let width = window.viewport_size().width;
         let compact = width < px(860.);
         let sidebar = width >= px(1100.);
-        // Native child webviews sit above GPUI overlays, so hide the article while a menu is open.
+        // Native child webviews sit above GPUI overlays, so hide the current page while a menu is open.
         let post_menu_open = self.post_menu.as_ref().and_then(WeakEntity::upgrade).is_some();
-        let page_visible = !self.show_details && (!compact || self.mobile_detail) && !window.has_active_dialog(cx) && !post_menu_open;
+        let page_visible = (!compact || self.mobile_detail) && !window.has_active_dialog(cx) && !post_menu_open;
         self.sync_browser(page_visible, window, cx);
         v_flex().id("workspace").track_focus(&self.focus).size_full()
             .bg(cx.theme().background).text_color(cx.theme().foreground).text_sm()
             .on_action(|_: &ToggleTheme, _, cx| crate::theme::install(cx, cx.theme().mode != ThemeMode::Dark))
             .on_action(|_: &About, window, cx| crate::about(window, cx))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if this.search.focus_handle(cx).contains_focused(window, cx) || this.draft.focus_handle(cx).contains_focused(window, cx) { return; }
+                if this.search.focus_handle(cx).contains_focused(window, cx) { return; }
                 let key = event.keystroke.key.as_str();
                 if event.keystroke.modifiers.platform && key == "z" { this.undo(window, cx); return; }
                 if event.keystroke.modifiers.platform || event.keystroke.modifiers.control || event.keystroke.modifiers.alt { return; }

@@ -20,14 +20,13 @@ binary are named `ruie-studio`.
 - Searches by title, site, or author.
 - Displays articles in an embedded browser with back, forward, reload, and an
   option to open the page in your default browser.
-- Shows post details and up to 20 top-level comments.
-- Saves review decisions and comment drafts locally, with undo for reviews.
+- Opens a post's Hacker News discussion in the Details tab.
+- Saves review decisions locally, with undo for reviews.
 - Supports light and dark appearances and compact window layouts.
 
 Review labels are local queues. Marking a post as Spam does not flag it on HN,
-and selecting Upvote does not cast a vote. Use **Open on HN** to vote or reply.
-For comment drafts, **Copy & open HN** copies the draft and opens the discussion
-so you can paste and submit it yourself. No API key is required.
+and selecting Upvote does not cast a vote. Use the **Details** tab to vote or
+reply on the discussion page. No API key is required.
 
 ## Build and run
 
@@ -64,20 +63,21 @@ cargo build --release --locked
 ./target/release/ruie-studio
 ```
 
-An internet connection is needed to fetch posts, comments, and article pages.
+An internet connection is needed to fetch posts and load article and discussion
+pages.
 Previously saved posts and reviews are loaded on startup.
 
 ## Reviewing posts
 
 Select a post to read its article. Use the review controls or right-click a row
-to move it into a queue. Open **Details** for post text, comments, and external
-links. Posts in **Upvote + comment** also have a locally saved comment editor
-in Details. Reviewed posts can be moved back to Inbox or restored with Undo.
+to move it into a queue. Choose **Go to post** from a row's context menu to open
+that post's Hacker News discussion in **Details**. Reviewed posts can be moved
+back to Inbox or restored with Undo.
 
 ### Keyboard shortcuts
 
 These review shortcuts apply when the workspace has focus, outside the search
-field, draft editor, and embedded browser.
+field and embedded browser.
 
 | Key | Action |
 | --- | --- |
@@ -106,7 +106,7 @@ stored in `reviews.json`:
 | Other platforms, otherwise | `~/.local/share/ruie-review/reviews.json` |
 
 The cache keeps reviewed posts, posts with drafts, and the newest 500 remaining
-posts. Comments and undo history are held in memory for the current session.
+posts. Undo history is held in memory for the current session.
 Back up `reviews.json` to preserve your reviews and drafts.
 
 ## Development
