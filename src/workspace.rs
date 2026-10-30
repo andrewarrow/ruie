@@ -481,9 +481,9 @@ impl Render for Workspace {
                 .child(v_flex().flex_1().min_w_0().min_h_0()
                     .when(!compact || !self.mobile_detail, |el| el.child(self.toolbar(compact, cx)))
                     .child(h_flex().flex_1().min_h_0().min_w_0().items_stretch()
-                        .when(!compact || !self.mobile_detail, |el| el.child(div().flex_1().min_w_0().h_full().child(self.queue(cx))))
+                        .when(!compact || !self.mobile_detail, |el| el.child(div().flex_1().flex_grow(2.).min_w_0().h_full().child(self.queue(cx))))
                         .when(!compact, |el| el.child(div().w(px(1.)).h_full().bg(cx.theme().border)))
-                        .when(!compact || self.mobile_detail, |el| el.child(div().flex_1().min_w_0().h_full().child(self.reader(compact, cx)))))))
+                        .when(!compact || self.mobile_detail, |el| el.child(div().flex_1().flex_grow(3.).min_w_0().h_full().child(self.reader(compact, cx)))))))
             .child(h_flex().h_9().px_4().gap_2().flex_shrink_0().border_t_1().border_color(cx.theme().border).bg(cx.theme().sidebar).text_xs().text_color(cx.theme().muted_foreground)
                 .child(div().min_w_0().truncate().flex_1().child(self.notice.clone().unwrap_or_else(|| {
                     if self.loading { "Syncing with Hacker News…".into() }
