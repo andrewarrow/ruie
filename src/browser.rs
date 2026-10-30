@@ -2,19 +2,15 @@
 use std::{cell::{Cell, RefCell}, rc::Rc};
 
 use futures::{StreamExt, channel::mpsc};
-use gpui_kit::{component::{ActiveTheme, Sizable, StyledExt, button::{Button, ButtonVariants}, h_flex, v_flex}, *};
-use gpui_kit::assets::IconName;
-use gpui_kit::prelude::FluentBuilder;
+use gpui_kit::*;
 
 enum PageEvent {
-    Load(wry::PageLoadEvent, String),
+    Load(wry::PageLoadEvent),
     Open(String),
 }
 
 pub(crate) struct Browser {
     raw: Rc<wry::WebView>,
-    label: String,
-    url: String,
     loading: bool,
     error: Option<String>,
     visible: Cell<bool>,
@@ -48,7 +44,7 @@ pub(crate) fn disable_keychain_prompts() -> anyhow::Result<()> {
 }
 
 impl Browser {
-    pub(crate) fn new(url: &str, label: &str, window: &mut Window, cx: &mut App) -> anyhow::Result<Entity<Self>> {
+    pub(crate) fn new(url: &str, window: &mut Window, cx: &mut App) -> anyhow::Result<Entity<Self>> {
         anyhow::ensure!(is_web_url(url), "Expected an HTTP or HTTPS URL");
         let (sender, mut receiver) = mpsc::channel(16);
         let loads = RefCell::new(sender.clone());
@@ -58,8 +54,8 @@ impl Browser {
             .with_visible(false)
             .with_focused(false)
             .with_navigation_handler(|url| url == "about:blank" || is_web_url(&url))
-            .with_on_page_load_handler(move |event, url| {
-                let _ = loads.borrow_mut().try_send(PageEvent::Load(event, url));
+            .with_on_page_load_handler(move |event, _| {
+                let _ = loads.borrow_mut().try_send(PageEvent::Load(event));
             })
             .with_new_window_req_handler(move |url, _| {
                 if is_web_url(&url) {
@@ -77,8 +73,6 @@ impl Browser {
 
         Ok(cx.new(|cx: &mut Context<Self>| Self {
             raw: Rc::new(raw),
-            label: label.to_owned(),
-            url: url.to_owned(),
             loading: true,
             error: None,
             visible: Cell::new(true),
@@ -86,8 +80,7 @@ impl Browser {
                 while let Some(event) = receiver.next().await {
                     if this.update(cx, |this, cx| {
                         match event {
-                            PageEvent::Load(event, url) => {
-                                this.url = url;
+                            PageEvent::Load(event) => {
                                 this.loading = matches!(event, wry::PageLoadEvent::Started);
                             }
                             PageEvent::Open(url) => this.load_url(&url, cx),
@@ -101,11 +94,10 @@ impl Browser {
 
     pub(crate) fn load_url(&mut self, url: &str, cx: &mut Context<Self>) {
         if !is_web_url(url) { return; }
-        self.url = url.to_owned();
         self.loading = true;
         // Keep the previous document out of view until this navigation finishes.
         let _ = self.raw.set_visible(false);
-        self.error = self.raw.load_url(url).err().map(|_| "Couldn't load this page. Try Reload or open it in your browser.".into());
+        self.error = self.raw.load_url(url).err().map(|_| "Couldn't load this page.".into());
         cx.notify();
     }
 
@@ -115,11 +107,6 @@ impl Browser {
     }
 
     pub(crate) fn show(&self) { self.visible.set(true); }
-
-    fn command(&mut self, result: wry::Result<()>, cx: &mut Context<Self>) {
-        self.error = result.err().map(|_| "Couldn't navigate this page. Try opening it in your browser.".into());
-        cx.notify();
-    }
 }
 
 impl Drop for Browser {
@@ -129,59 +116,41 @@ impl Drop for Browser {
 impl Render for Browser {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let view = cx.entity().downgrade();
-        v_flex().size_full().min_h_0()
-            .child(h_flex().h_11().px_3().gap_1().flex_shrink_0().border_b_1().border_color(cx.theme().border)
-                .child(Button::new("web-back").small().ghost().icon(IconName::ArrowLeft)
-                    .accessibility_label("Back").tooltip("Back")
-                    .on_click(cx.listener(|this, _, _, cx| this.command(this.raw.go_back(), cx))))
-                .child(Button::new("web-forward").small().ghost().icon(IconName::ArrowRight)
-                    .accessibility_label("Forward").tooltip("Forward")
-                    .on_click(cx.listener(|this, _, _, cx| this.command(this.raw.go_forward(), cx))))
-                .child(Button::new("web-reload").small().ghost().icon(IconName::RefreshCw)
-                    .accessibility_label("Reload page").tooltip("Reload page")
-                    .on_click(cx.listener(|this, _, _, cx| this.command(this.raw.reload(), cx))))
-                .child(div().text_xs().font_medium().child(self.label.clone()))
-                .child(div().flex_1().min_w_0().px_2().truncate().text_xs().text_color(cx.theme().muted_foreground).child(self.url.clone()))
-                .when(self.loading, |el| el.child(div().text_xs().text_color(cx.theme().muted_foreground).child("Loading…")))
-                .child(Button::new("web-external").small().ghost().icon(IconName::ExternalLink)
-                    .accessibility_label("Open page in browser").tooltip("Open page in browser")
-                    .on_click(cx.listener(|this, _, _, cx| { if is_web_url(&this.url) { cx.open_url(&this.url); } }))))
-            .when_some(self.error.clone(), |el, error| el.child(div().px_4().py_2().text_xs().child(error)))
-            .child(div().flex_1().min_h_0().occlude().child(canvas(
-                move |bounds, window, cx| {
-                    let _ = view.update(cx, |this, cx| {
-                        if this.loading || this.error.is_some() {
-                            let _ = this.raw.set_visible(false);
-                            return;
+        div().size_full().min_h_0().occlude().child(canvas(
+            move |bounds, window, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    if this.loading || this.error.is_some() {
+                        let _ = this.raw.set_visible(false);
+                        return;
+                    }
+                    if !this.visible.get() { return; }
+                    let visible = bounds.intersect(&window.content_mask().bounds);
+                    if visible.is_empty() { this.hide(); return; }
+                    #[cfg(target_os = "linux")]
+                    let rect = {
+                        use gtk::prelude::WidgetExt;
+                        use wry::WebViewExtUnix;
+                        let factor = window.scale_factor();
+                        let _ = this.raw.zoom(f64::from(factor) / f64::from(this.raw.webview().scale_factor().max(1)));
+                        wry::Rect {
+                            position: wry::dpi::PhysicalPosition::new(f32::from(visible.origin.x) * factor, f32::from(visible.origin.y) * factor).into(),
+                            size: wry::dpi::PhysicalSize::new(f32::from(visible.size.width) * factor, f32::from(visible.size.height) * factor).into(),
                         }
-                        if !this.visible.get() { return; }
-                        let visible = bounds.intersect(&window.content_mask().bounds);
-                        if visible.is_empty() { this.hide(); return; }
-                        #[cfg(target_os = "linux")]
-                        let rect = {
-                            use gtk::prelude::WidgetExt;
-                            use wry::WebViewExtUnix;
-                            let factor = window.scale_factor();
-                            let _ = this.raw.zoom(f64::from(factor) / f64::from(this.raw.webview().scale_factor().max(1)));
-                            wry::Rect {
-                                position: wry::dpi::PhysicalPosition::new(f32::from(visible.origin.x) * factor, f32::from(visible.origin.y) * factor).into(),
-                                size: wry::dpi::PhysicalSize::new(f32::from(visible.size.width) * factor, f32::from(visible.size.height) * factor).into(),
-                            }
-                        };
-                        #[cfg(not(target_os = "linux"))]
-                        let rect = wry::Rect {
-                            position: wry::dpi::LogicalPosition::new(f64::from(visible.origin.x), f64::from(visible.origin.y)).into(),
-                            size: wry::dpi::LogicalSize::new(f64::from(visible.size.width), f64::from(visible.size.height)).into(),
-                        };
-                        if this.raw.set_bounds(rect).and_then(|_| this.raw.set_visible(true)).is_err() && this.error.is_none() {
-                            this.hide();
-                            this.error = Some("Couldn't display this page. Open it in your browser to continue.".into());
-                            cx.notify();
-                        }
-                    });
-                },
-                |_, _, _, _| {},
-            ).size_full()))
+                    };
+                    #[cfg(not(target_os = "linux"))]
+                    let rect = wry::Rect {
+                        position: wry::dpi::LogicalPosition::new(f64::from(visible.origin.x), f64::from(visible.origin.y)).into(),
+                        size: wry::dpi::LogicalSize::new(f64::from(visible.size.width), f64::from(visible.size.height)).into(),
+                    };
+                    if this.raw.set_bounds(rect).and_then(|_| this.raw.set_visible(true)).is_err() && this.error.is_none() {
+                        this.hide();
+                        this.error = Some("Couldn't display this page.".into());
+                        cx.notify();
+                    }
+                });
+            },
+            |_, _, _, _| {},
+        ).size_full())
     }
 }
 

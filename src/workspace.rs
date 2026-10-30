@@ -225,7 +225,7 @@ impl Workspace {
         cx.notify();
     }
 
-    fn sync_browser_pane(pane: &mut BrowserPane, label: &str, url: Option<String>, visible: bool, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
+    fn sync_browser_pane(pane: &mut BrowserPane, url: Option<String>, visible: bool, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !visible || !enabled || url.is_none() {
             if let Some(browser) = &pane.browser { browser.read(cx).hide(); }
             return;
@@ -238,7 +238,7 @@ impl Workspace {
         if let Some(browser) = &pane.browser {
             browser.update(cx, |browser, cx| browser.load_url(&url, cx));
         } else {
-            match crate::browser::Browser::new(&url, label, window, cx) {
+            match crate::browser::Browser::new(&url, window, cx) {
                 Ok(browser) => pane.browser = Some(browser),
                 Err(error) => {
                     eprintln!("Could not create embedded browser: {error:#}");
@@ -364,70 +364,22 @@ impl Workspace {
             .into_any_element()
     }
 
-    fn triage_bar(&self, compact: bool, cx: &mut Context<Self>) -> AnyElement {
-        let decision = self.selected.and_then(|id| self.store.decisions.get(&id)).copied();
-        v_flex().p_4().gap_2().flex_shrink_0().border_t_1().border_color(cx.theme().border)
-            .child(h_flex().gap_2().children([
-                (Decision::Spam, IconName::Trash, "Spam", "1"),
-                (Decision::Upvote, IconName::ArrowUp, "Upvote", "2"),
-                (Decision::Comment, IconName::MessageSquare, if compact { "Vote + reply" } else { "Upvote + comment" }, "3"),
-            ].into_iter().map(|(value, icon, label, key)| {
-                Button::new(("triage", value as usize)).outline().flex_1().h_11().px_2().icon(icon).label(label)
-                    .when(decision == Some(value), |button| button.bg(cx.theme().list_active).border_color(cx.theme().primary))
-                    .tooltip(format!("Mark {} · {key}", value.label()))
-                    .on_click(cx.listener(move |this, _, window, cx| this.decide(Some(value), window, cx)))
-            })))
-            .when(!compact, |el| el.child(div().text_xs().text_color(cx.theme().muted_foreground).child("1  Spam     2  Upvote     3  Upvote + comment     J / K  Navigate")))
-            .into_any_element()
-    }
-
-    fn browser_content(&self, details: bool, cx: &mut Context<Self>) -> AnyElement {
+    fn browser_content(&self, details: bool) -> AnyElement {
         let pane = if details { &self.details_browser } else { &self.article_browser };
-        let url = pane.url.clone().or_else(|| if details { self.discussion_url() } else { self.article_url() }).unwrap_or_default();
-        if let Some(browser) = &pane.browser {
-            browser.clone().into_any_element()
-        } else {
-            v_flex().flex_1().min_h_0().px_2().py_1().gap_1()
-                .child(div().text_xs().text_color(cx.theme().muted_foreground)
-                    .child(pane.error.clone().unwrap_or_else(|| "Embedded browser is unavailable in this preview.".into())))
-                .child(h_flex().gap_1()
-                    .child(Button::new(if details { "retry-details-browser" } else { "retry-article-browser" }).xsmall().outline().label("Retry")
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            let pane = if details { &mut this.details_browser } else { &mut this.article_browser };
-                            pane.url = None;
-                            pane.error = None;
-                            cx.notify();
-                        })))
-                    .child(Button::new(if details { "fallback-details-browser" } else { "fallback-article-browser" }).xsmall().ghost().label("Open in browser")
-                        .on_click(move |_, _, cx| cx.open_url(&url))))
-                .into_any_element()
+        if self.selected.is_some() {
+            if let Some(browser) = &pane.browser {
+                return browser.clone().into_any_element();
+            }
         }
+        div().size_full().into_any_element()
     }
 
-    fn reader(&self, compact: bool, cx: &mut Context<Self>) -> AnyElement {
-        let Some(post) = self.selected.and_then(|id| self.store.posts.get(&id)) else {
-            return v_flex().flex_1().min_w_0().p_6().text_color(cx.theme().muted_foreground).child("Select a post to review.").into_any_element();
-        };
-        let id = post.id;
-        let decision = self.store.decisions.get(&id).copied();
-        v_flex().flex_1().min_w_0().min_h_0().h_full()
-            .child(h_flex().h_12().px_5().gap_2().flex_shrink_0().border_b_1().border_color(cx.theme().border)
-                .when(compact, |el| el.child(Button::new("back").small().ghost().icon(IconName::ArrowLeft).label("Posts")
-                    .on_click(cx.listener(|this, _, _, cx| { this.mobile_detail = false; cx.notify(); }))))
-                .child(div().flex_1())
-                .when_some(decision, |el, decision| el.child(div().text_xs().text_color(cx.theme().primary).child(decision.label())))
-                .when(decision.is_some(), |el| el.child(Button::new("move-inbox").small().ghost().icon(IconName::Inbox).tooltip("Move back to inbox").accessibility_label("Move back to inbox")
-                    .on_click(cx.listener(|this, _, window, cx| this.decide(None, window, cx)))))
-                .child(Button::new("previous").small().ghost().icon(IconName::ChevronUp).tooltip("Previous post · K").accessibility_label("Previous post")
-                    .on_click(cx.listener(|this, _, window, cx| this.navigate(-1, window, cx))))
-                .child(Button::new("next").small().ghost().icon(IconName::ChevronDown).tooltip("Next post · J").accessibility_label("Next post")
-                    .on_click(cx.listener(|this, _, window, cx| this.navigate(1, window, cx)))))
-            .child(v_flex().flex_1().min_h_0().overflow_hidden().items_stretch()
-                .child(div().id("details-pane").test_support().flex_1().flex_grow(3.).flex_shrink_1().flex_basis(px(0.)).min_h_0().min_w_0().overflow_hidden().border_b_1().border_color(cx.theme().border)
-                    .child(self.browser_content(true, cx)))
-                .child(div().id("article-pane").test_support().flex_1().flex_grow(7.).flex_shrink_1().flex_basis(px(0.)).min_h_0().min_w_0().overflow_hidden()
-                    .child(self.browser_content(false, cx))))
-            .child(self.triage_bar(compact, cx))
+    fn reader(&self) -> AnyElement {
+        v_flex().id("reader").test_support().flex_1().min_w_0().min_h_0().h_full().overflow_hidden()
+            .child(div().id("details-pane").test_support().flex_1().flex_shrink_1().flex_basis(px(0.)).min_h_0().min_w_0().overflow_hidden()
+                .child(self.browser_content(true)))
+            .child(div().id("article-pane").test_support().flex_1().flex_shrink_1().flex_basis(px(0.)).min_h_0().min_w_0().overflow_hidden()
+                .child(self.browser_content(false)))
             .into_any_element()
     }
 }
@@ -442,8 +394,8 @@ impl Render for Workspace {
         let page_visible = (!compact || self.mobile_detail) && !window.has_active_dialog(cx) && !post_menu_open;
         let discussion_url = self.discussion_url();
         let article_url = self.article_url();
-        Self::sync_browser_pane(&mut self.details_browser, "Details", discussion_url, page_visible, self.browser_enabled, window, cx);
-        Self::sync_browser_pane(&mut self.article_browser, "Article", article_url, page_visible, self.browser_enabled, window, cx);
+        Self::sync_browser_pane(&mut self.details_browser, discussion_url, page_visible, self.browser_enabled, window, cx);
+        Self::sync_browser_pane(&mut self.article_browser, article_url, page_visible, self.browser_enabled, window, cx);
         v_flex().id("workspace").track_focus(&self.focus).size_full()
             .bg(cx.theme().background).text_color(cx.theme().foreground).text_sm()
             .on_action(|_: &ToggleTheme, _, cx| crate::theme::install(cx, cx.theme().mode != ThemeMode::Dark))
@@ -466,6 +418,8 @@ impl Render for Workspace {
                 }
             }))
             .child(TitleBar::new().child(h_flex().w_full().pr_3().gap_2()
+                .when(compact && self.mobile_detail, |el| el.child(Button::new("back").small().ghost().icon(IconName::ArrowLeft).label("Posts")
+                    .on_click(cx.listener(|this, _, _, cx| { this.mobile_detail = false; cx.notify(); }))))
                 .child(div().text_xs().font_medium().child("HN Review"))
                 .child(div().flex_1())
                 .when(!compact, |el| el.child(div().text_xs().text_color(cx.theme().muted_foreground).child("Hacker News · Newest")))
@@ -478,12 +432,11 @@ impl Render for Workspace {
                 .child(Icon::new(IconName::WifiOff).small())
                 .child(div().flex_1().min_w_0().text_xs().child(error))))
             .child(h_flex().flex_1().min_h_0().min_w_0().items_stretch()
-                .child(v_flex().flex_1().min_w_0().min_h_0()
-                    .when(!compact || !self.mobile_detail, |el| el.child(self.toolbar(compact, cx)))
-                    .child(h_flex().flex_1().min_h_0().min_w_0().items_stretch()
-                        .when(!compact || !self.mobile_detail, |el| el.child(div().flex_1().flex_grow(2.).min_w_0().h_full().child(self.queue(cx))))
-                        .when(!compact, |el| el.child(div().w(px(1.)).h_full().bg(cx.theme().border)))
-                        .when(!compact || self.mobile_detail, |el| el.child(div().flex_1().flex_grow(3.).min_w_0().h_full().child(self.reader(compact, cx)))))))
+                .when(!compact || !self.mobile_detail, |el| el.child(v_flex().flex_1().flex_grow(2.).min_w_0().h_full()
+                    .child(self.toolbar(true, cx))
+                    .child(self.queue(cx))))
+                .when(!compact, |el| el.child(div().w(px(1.)).flex_shrink_0().h_full().bg(cx.theme().border)))
+                .when(!compact || self.mobile_detail, |el| el.child(div().flex_1().flex_grow(3.).min_w_0().h_full().child(self.reader()))))
             .child(h_flex().h_9().px_4().gap_2().flex_shrink_0().border_t_1().border_color(cx.theme().border).bg(cx.theme().sidebar).text_xs().text_color(cx.theme().muted_foreground)
                 .child(div().min_w_0().truncate().flex_1().child(self.notice.clone().unwrap_or_else(|| {
                     if self.loading { "Syncing with Hacker News…".into() }

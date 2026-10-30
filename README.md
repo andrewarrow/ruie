@@ -18,10 +18,8 @@ binary are named `ruie-studio`.
 - Fetches the newest posts in batches of 50 and refreshes every minute.
 - Organizes posts into Inbox, Upvote, Upvote + comment, Spam, and All posts.
 - Searches by title, site, or author.
-- Displays articles in an embedded browser with back, forward, reload, and an
-  option to open the page in your default browser.
-- Shows the Hacker News discussion above the article in two independently
-  navigable embedded browsers.
+- Shows the Hacker News discussion above the article in two equally sized
+  embedded browsers without toolbars, labels, or URL bars.
 - Saves review decisions locally, with undo for reviews.
 - Supports light and dark appearances and compact window layouts.
 
@@ -33,7 +31,7 @@ On macOS, the app disables keychain authorization dialogs so embedded websites
 cannot interrupt reading with a “WebCrypto Master Key” password prompt. Cookies
 and website storage remain persistent. Keychain operations that need approval
 fail instead; if a site's sign-in or encrypted storage requires that access, use
-**Open page in browser**.
+your default browser.
 
 ## Build and run
 
@@ -76,8 +74,8 @@ Previously saved posts and reviews are loaded on startup.
 
 ## Reviewing posts
 
-Select a post to read its article. Use the review controls or right-click a row
-to move it into a queue. Choose **Go to post** from a row's context menu to open
+Select a post to read its article. Right-click a row or use the keyboard
+shortcuts to move it into a queue. Choose **Go to post** from a row's context menu to open
 that post's Hacker News discussion in the upper reader pane. Reviewed posts can
 be moved back to Inbox or restored with Undo.
 

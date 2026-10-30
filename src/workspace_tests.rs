@@ -50,8 +50,17 @@ fn go_to_post_opens_the_clicked_hn_discussion(cx: &mut TestAppContext) {
             assert_eq!(view.article_browser.url.as_deref(), Some("https://example.com/3"));
             let details = window.find("details-pane").bounds();
             let article = window.find("article-pane").bounds();
+            let reader = window.find("reader").bounds();
             let total = details.size.height + article.size.height;
-            assert!((f32::from(details.size.height / total) - 0.3).abs() < 0.01);
+            assert!((f32::from(details.size.height / total) - 0.5).abs() < 0.01);
+            assert_eq!(details.origin, reader.origin);
+            assert_eq!(article.bottom(), reader.bottom());
+            for control in ["previous", "next", "move-inbox", "retry-details-browser", "fallback-article-browser"] {
+                assert!(window.try_find(control).is_none());
+            }
+            if width >= 860. {
+                assert!((f32::from(reader.size.width) / (width - 1.) - 0.6).abs() < 0.01);
+            }
             assert_eq!(details.bottom(), article.origin.y);
             assert_eq!(details.origin.x, article.origin.x);
             assert_eq!(details.size.width, article.size.width);
