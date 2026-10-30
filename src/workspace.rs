@@ -225,10 +225,6 @@ impl Workspace {
         cx.notify();
     }
 
-    fn filter_icon(filter: Filter) -> IconName {
-        match filter { Filter::Inbox => IconName::Inbox, Filter::Upvote => IconName::ArrowUp, Filter::Comment => IconName::MessageSquare, Filter::Spam => IconName::Trash, Filter::All => IconName::List }
-    }
-
     fn sync_browser_pane(pane: &mut BrowserPane, label: &str, url: Option<String>, visible: bool, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !visible || !enabled || url.is_none() {
             if let Some(browser) = &pane.browser { browser.read(cx).hide(); }
@@ -260,29 +256,6 @@ impl Workspace {
         self.selected.and_then(|id| self.store.posts.get(&id)).map(|post| post.article_url().unwrap_or_else(|| post.discussion_url()))
     }
 
-    fn sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
-        v_flex().w(px(196.)).flex_shrink_0().h_full().bg(cx.theme().sidebar)
-            .border_r_1().border_color(cx.theme().border).px_3().py_5().gap_1()
-            .child(h_flex().gap_2().px_2().mb_6()
-                .child(div().size_7().flex().items_center().justify_center().rounded_sm().bg(cx.theme().primary).text_color(cx.theme().primary_foreground).font_bold().child("Y"))
-                .child(div().font_semibold().text_base().child("HN Review")))
-            .children(Filter::ALL.into_iter().map(|filter| {
-                let active = self.filter == filter;
-                Button::new(("filter", filter as usize)).ghost().w_full().h_10()
-                    .when(active, |button| button.bg(cx.theme().list_active).text_color(cx.theme().foreground))
-                    .child(h_flex().w_full().gap_2()
-                        .child(Icon::new(Self::filter_icon(filter)).small().text_color(if active { cx.theme().primary } else { cx.theme().muted_foreground }))
-                        .child(div().flex_1().text_left().child(filter.label()))
-                        .child(div().text_xs().text_color(cx.theme().muted_foreground).child(self.store.count(filter).to_string())))
-                    .on_click(cx.listener(move |this, _, window, cx| this.set_filter(filter, window, cx)))
-            }))
-            .child(div().flex_1())
-            .child(v_flex().px_2().gap_2().text_xs().text_color(cx.theme().muted_foreground)
-                .child("Reviews stay on this device.")
-                .child("Vote and reply on Hacker News."))
-            .into_any_element()
-    }
-
     fn toolbar(&self, narrow: bool, cx: &mut Context<Self>) -> AnyElement {
         v_flex().flex_shrink_0().border_b_1().border_color(cx.theme().border)
             .child(h_flex().h_16().px_5().gap_2()
@@ -294,13 +267,13 @@ impl Workspace {
                     .label(if self.loading { "Loading…" } else { "Refresh" }).disabled(self.loading)
                     .tooltip("Refresh newest posts · R")
                     .on_click(cx.listener(|this, _, _, cx| this.fetch(false, cx)))))
-            .when(narrow, |el| el.child(h_flex().px_3().pb_3().gap_1().flex_wrap()
+            .child(h_flex().px_3().pb_3().gap_1().flex_wrap()
                 .children(Filter::ALL.into_iter().map(|filter| {
                     Button::new(("compact-filter", filter as usize)).small().ghost()
                         .when(self.filter == filter, |button| button.bg(cx.theme().list_active))
                         .label(format!("{} {}", filter.label(), self.store.count(filter)))
                         .on_click(cx.listener(move |this, _, window, cx| this.set_filter(filter, window, cx)))
-                }))))
+                })))
             .into_any_element()
     }
 
@@ -464,7 +437,6 @@ impl Render for Workspace {
         self.ensure_selection(window, cx);
         let width = window.viewport_size().width;
         let compact = width < px(860.);
-        let sidebar = width >= px(1100.);
         // Native child webviews sit above GPUI overlays, so hide the current page while a menu is open.
         let post_menu_open = self.post_menu.as_ref().and_then(WeakEntity::upgrade).is_some();
         let page_visible = (!compact || self.mobile_detail) && !window.has_active_dialog(cx) && !post_menu_open;
@@ -506,9 +478,8 @@ impl Render for Workspace {
                 .child(Icon::new(IconName::WifiOff).small())
                 .child(div().flex_1().min_w_0().text_xs().child(error))))
             .child(h_flex().flex_1().min_h_0().min_w_0().items_stretch()
-                .when(sidebar, |el| el.child(self.sidebar(cx)))
                 .child(v_flex().flex_1().min_w_0().min_h_0()
-                    .when(!compact || !self.mobile_detail, |el| el.child(self.toolbar(!sidebar, cx)))
+                    .when(!compact || !self.mobile_detail, |el| el.child(self.toolbar(compact, cx)))
                     .child(h_flex().flex_1().min_h_0().min_w_0().items_stretch()
                         .when(!compact || !self.mobile_detail, |el| el.child(div().flex_1().min_w_0().h_full().child(self.queue(cx))))
                         .when(!compact, |el| el.child(div().w(px(1.)).h_full().bg(cx.theme().border)))
